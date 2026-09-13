@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,59 +14,22 @@ class TextPart(BaseModel):
     text: str
 
 
-class CitationPayload(BaseModel):
+class QueryResultPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    citation_index: int = Field(alias="citationIndex")
-    chunk_id: uuid.UUID = Field(alias="chunkId")
-    excerpt: str
-    ticker: str
-    company_name: str | None = Field(default=None, alias="companyName")
-    form: str
-    filing_date: date = Field(alias="filingDate")
-    page: str | None = None
-    section: str | None = None
+    query_id: uuid.UUID = Field(alias="queryId")
+    sql: str
+    columns: list[str]
+    rows: list[list[Any]]
+    row_count: int = Field(alias="rowCount")
+    truncated: bool
+    elapsed_ms: int = Field(alias="elapsedMs")
 
 
-class CitationPart(BaseModel):
-    type: Literal["data-citation"] = "data-citation"
+class QueryResultPart(BaseModel):
+    type: Literal["data-query-result"] = "data-query-result"
     id: str | None = None
-    data: CitationPayload
-
-
-class CitationContextChunk(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    chunk_id: uuid.UUID = Field(alias="chunkId")
-    chunk_index: int = Field(alias="chunkIndex")
-    role: Literal["previous", "anchor", "next"]
-    text: str
-    page: str | None = None
-    section: str | None = None
-
-
-class CitationContextTable(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    table_index: int = Field(alias="tableIndex")
-    title: str | None = None
-    units: str | None = None
-    markdown: str
-    table_data: dict[str, Any] = Field(alias="tableData")
-
-
-class CitationContextResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    anchor_chunk_id: uuid.UUID = Field(alias="anchorChunkId")
-    document_id: uuid.UUID = Field(alias="documentId")
-    ticker: str
-    company_name: str | None = Field(default=None, alias="companyName")
-    form: str
-    filing_date: date = Field(alias="filingDate")
-    source_url: str = Field(alias="sourceUrl")
-    chunks: list[CitationContextChunk]
-    table: CitationContextTable | None = None
+    data: QueryResultPayload
 
 
 class StatusPayload(BaseModel):
@@ -79,7 +42,7 @@ class StatusPart(BaseModel):
     data: StatusPayload
 
 
-MessagePart = Annotated[TextPart | CitationPart, Field(discriminator="type")]
+MessagePart = Annotated[TextPart | QueryResultPart, Field(discriminator="type")]
 
 
 class UIMessage(BaseModel):

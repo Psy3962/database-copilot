@@ -8,12 +8,12 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.assistant.deps import TurnRegistry
-from app.assistant.outputs import GroundedAnswer
+from app.assistant.outputs import DatabaseAnswer
 from app.database.models.message_role import MessageRole
 from app.schemas.chat import (
-    CitationPart,
-    CitationPayload,
     MessagePart,
+    QueryResultPart,
+    QueryResultPayload,
     TextPart,
     UIMessage,
 )
@@ -58,8 +58,8 @@ def _parse_part(raw: dict[str, Any]) -> MessagePart:
     part_type = raw.get("type")
     if part_type == "text":
         return TextPart.model_validate(raw)
-    if part_type == "data-citation":
-        return CitationPart.model_validate(raw)
+    if part_type == "data-query-result":
+        return QueryResultPart.model_validate(raw)
     raise ValueError(f"Unsupported message part type: {part_type!r}")
 
 
@@ -78,40 +78,37 @@ def row_to_ui_message(row: dict[str, Any]) -> UIMessage:
     )
 
 
-def citation_parts_from_grounded_answer(
-    answer: GroundedAnswer,
+def query_result_part_from_answer(
+    answer: DatabaseAnswer,
     registry: TurnRegistry,
-) -> list[CitationPart]:
-    parts: list[CitationPart] = []
-    for citation in answer.citations:
-        passage = registry.passages_by_chunk_id[citation.chunk_id]
-        parts.append(
-            CitationPart(
-                id=str(citation.chunk_id),
-                data=CitationPayload(
-                    citation_index=citation.citation_index,
-                    chunk_id=citation.chunk_id,
-                    excerpt=citation.excerpt,
-                    ticker=passage.ticker,
-                    company_name=passage.company_name,
-                    form=passage.form,
-                    filing_date=passage.filing_date,
-                    page=passage.page,
-                    section=passage.section,
-                ),
-            )
+) -> QueryResultPart | None:
+    if answer.query_id is None:
+        return None
+    result = registry.results_by_query_id[answer.query_id]
+    return QueryResultPart(
+        id=str(result.query_id),
+        data=QueryResultPayload(
+            query_id=result.query_id,
+            sql=result.sql,
+            columns=result.columns,
+            rows=result.rows,
+            row_count=result.row_count,
+            truncated=result.truncated,
+            elapsed_ms=result.elapsed_ms,
         )
-    return parts
+    )
 
 
 def build_assistant_message(
-    answer: GroundedAnswer,
+    answer: DatabaseAnswer,
     registry: TurnRegistry,
     *,
     message_id: uuid.UUID | None = None,
 ) -> UIMessage:
     parts: list[MessagePart] = [TextPart(text=answer.answer)]
-    parts.extend(citation_parts_from_grounded_answer(answer, registry))
+    query_part = query_result_part_from_answer(answer, registry)
+    if query_part is not None:
+        parts.append(query_part)
     return UIMessage(
         id=str(message_id or uuid.uuid4()),
         role="assistant",

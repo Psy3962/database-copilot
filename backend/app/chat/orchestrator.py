@@ -1,4 +1,4 @@
-"""Coordinates one chat turn: agent → validate → stream → persist."""
+"""Coordinates one database chat turn: agent → validate → stream → persist."""
 
 from __future__ import annotations
 
@@ -8,18 +8,17 @@ from collections.abc import AsyncIterator
 
 from supabase import AsyncClient
 
-from app.assistant.agent import run_document_agent
-from app.assistant.deps import DocumentAgentDeps, TurnRegistry
-from app.assistant.outputs import GroundedAnswer
+from app.assistant.agent import run_database_agent
+from app.assistant.deps import DatabaseAgentDeps, TurnRegistry
+from app.assistant.outputs import DatabaseAnswer
 from app.auth.dependencies import CurrentUser
 from app.chat.messages import text_from_parts
 from app.chat.streaming import (
-    stream_grounded_turn_and_persist,
+    stream_database_turn_and_persist,
     stream_error,
     stream_status,
 )
-from app.grounding.validator import GroundingValidator, prune_unreferenced_citations
-from app.retrieval.retriever import DocumentRetriever
+from app.grounding.validator import QueryResultValidator
 from app.schemas.chat import UIMessage
 
 MAX_VALIDATION_ATTEMPTS = 2
@@ -27,7 +26,7 @@ MAX_VALIDATION_ATTEMPTS = 2
 
 async def _yield_status_updates(
     status_queue: asyncio.Queue[tuple[str, str]],
-    agent_task: asyncio.Task[GroundedAnswer],
+    agent_task: asyncio.Task[DatabaseAnswer],
 ) -> AsyncIterator[str]:
     while not agent_task.done():
         try:
@@ -50,7 +49,6 @@ async def run_turn(
     user: CurrentUser,
     user_message: UIMessage,
     thread_title: str,
-    retriever: DocumentRetriever,
 ) -> AsyncIterator[str]:
     loop = asyncio.get_running_loop()
     query = text_from_parts(user_message.parts).strip()
@@ -62,7 +60,7 @@ async def run_turn(
     async for event in stream_status("analyzing", "Analyzing your question…"):
         yield event
 
-    grounded: GroundedAnswer | None = None
+    grounded: DatabaseAnswer | None = None
     validation = None
     for attempt in range(1, MAX_VALIDATION_ATTEMPTS + 1):
         registry = TurnRegistry()
@@ -71,15 +69,14 @@ async def run_turn(
         def on_status(stage: str, message: str) -> None:
             loop.call_soon_threadsafe(status_queue.put_nowait, (stage, message))
 
-        deps = DocumentAgentDeps(
-            retriever=retriever,
+        deps = DatabaseAgentDeps(
             registry=registry,
             thread_id=thread_id,
             user_id=user.id,
             on_status=on_status,
         )
         agent_task = asyncio.create_task(
-            asyncio.to_thread(run_document_agent, query, deps)
+            asyncio.to_thread(run_database_agent, query, deps)
         )
 
         async for event in _yield_status_updates(status_queue, agent_task):
@@ -92,17 +89,16 @@ async def run_turn(
                 yield event
             return
 
-        async for event in stream_status("verifying", "Verifying citations…"):
+        async for event in stream_status("verifying", "Verifying query result…"):
             yield event
 
-        grounded = prune_unreferenced_citations(grounded)
-        validation = await GroundingValidator().validate(grounded, registry)
+        validation = await QueryResultValidator().validate(grounded, registry)
         if validation.ok or attempt == MAX_VALIDATION_ATTEMPTS:
             break
 
         async for event in stream_status(
             "retrying",
-            "Could not fully verify citations; retrying with stricter grounding…",
+            "Could not verify the query result; retrying…",
         ):
             yield event
 
@@ -115,7 +111,7 @@ async def run_turn(
         async for event in stream_status("streaming", "Preparing answer…"):
             yield event
 
-    async for event in stream_grounded_turn_and_persist(
+    async for event in stream_database_turn_and_persist(
         client=client,
         thread_id=thread_id,
         user_message=user_message,

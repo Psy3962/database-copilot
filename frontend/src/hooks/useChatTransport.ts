@@ -2,8 +2,8 @@ import { useMemo } from 'react'
 import { DefaultChatTransport } from 'ai'
 
 import { getAccessToken } from '@/lib/api'
-import { isStatusPart, type PipelineStatus } from '@/lib/citations'
 import { env } from '@/lib/env'
+import { isStatusPart, type PipelineStatus } from '@/lib/query-results'
 
 async function consumeStatusStream(
   stream: ReadableStream<Uint8Array>,

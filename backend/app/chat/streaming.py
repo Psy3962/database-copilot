@@ -1,4 +1,4 @@
-"""AI SDK-compatible SSE streaming for grounded assistant replies."""
+"""AI SDK-compatible SSE streaming for database assistant replies."""
 
 from __future__ import annotations
 
@@ -9,15 +9,15 @@ from collections.abc import AsyncIterator
 from supabase import AsyncClient
 
 from app.assistant.deps import TurnRegistry
-from app.assistant.outputs import GroundedAnswer
+from app.assistant.outputs import DatabaseAnswer
 from app.chat.messages import build_assistant_message
-from app.database.chats import append_grounded_turn
+from app.database.chats import append_database_turn
 from app.grounding.validator import ValidationResult
-from app.schemas.chat import CitationPart, StatusPart, StatusPayload, UIMessage
+from app.schemas.chat import QueryResultPart, StatusPart, StatusPayload, UIMessage
 
-GROUNDING_FAILURE_MESSAGE = (
-    "I found relevant source passages, but I could not fully verify the answer "
-    "against them. Try asking a narrower question or breaking it into smaller parts."
+VALIDATION_FAILURE_MESSAGE = (
+    "I could not verify this answer against a query executed in the read-only "
+    "database session. Try asking a narrower question."
 )
 
 
@@ -43,14 +43,8 @@ async def _text_events(
     yield _sse_event({"type": "text-end", "id": message_id})
 
 
-async def _citation_events(citation_parts: list[CitationPart]) -> AsyncIterator[str]:
-    for part in citation_parts:
-        payload = part.model_dump(by_alias=True, mode="json")
-        yield _sse_event(payload)
-
-
-async def stream_grounded_answer(
-    answer: GroundedAnswer,
+async def stream_database_answer(
+    answer: DatabaseAnswer,
     registry: TurnRegistry,
     *,
     message_id: str,
@@ -61,11 +55,12 @@ async def stream_grounded_answer(
         yield event
 
     assistant_message = build_assistant_message(answer, registry, message_id=uuid.UUID(message_id))
-    citation_parts = [
-        part for part in assistant_message.parts if isinstance(part, CitationPart)
-    ]
-    async for event in _citation_events(citation_parts):
-        yield event
+    query_part = next(
+        (part for part in assistant_message.parts if isinstance(part, QueryResultPart)),
+        None,
+    )
+    if query_part is not None:
+        yield _sse_event(query_part.model_dump(by_alias=True, mode="json"))
 
     yield _sse_event({"type": "finish"})
 
@@ -74,18 +69,18 @@ async def stream_error(error_text: str) -> AsyncIterator[str]:
     yield _sse_event({"type": "error", "errorText": error_text})
 
 
-async def stream_grounded_turn_and_persist(
+async def stream_database_turn_and_persist(
     *,
     client: AsyncClient,
     thread_id: uuid.UUID,
     user_message: UIMessage,
     thread_title: str,
-    answer: GroundedAnswer,
+    answer: DatabaseAnswer,
     registry: TurnRegistry,
     validation: ValidationResult,
 ) -> AsyncIterator[str]:
     if not validation.ok:
-        async for event in stream_error(GROUNDING_FAILURE_MESSAGE):
+        async for event in stream_error(VALIDATION_FAILURE_MESSAGE):
             yield event
         return
 
@@ -97,14 +92,14 @@ async def stream_grounded_turn_and_persist(
     )
 
     try:
-        async for event in stream_grounded_answer(
+        async for event in stream_database_answer(
             answer,
             registry,
             message_id=message_id,
         ):
             yield event
     finally:
-        await append_grounded_turn(
+        await append_database_turn(
             client,
             thread_id=thread_id,
             user_message=user_message,

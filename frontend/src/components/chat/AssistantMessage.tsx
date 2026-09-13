@@ -3,18 +3,15 @@ import type { UIMessage } from 'ai'
 import { Check, Copy } from 'lucide-react'
 
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
-import { CitationChip } from '@/components/chat/CitationChip'
+import { QueryResultCard } from '@/components/chat/QueryResultCard'
 import { Button } from '@/components/ui/button'
 import {
-  citationsFromMessage,
+  queryResultFromMessage,
   textFromMessage,
-  type CitationPayload,
-} from '@/lib/citations'
+} from '@/lib/query-results'
 
 type AssistantMessageProps = {
   message: UIMessage
-  selectedCitationIndex: number | null
-  onSelectCitation: (citation: CitationPayload) => void
   isStreaming?: boolean
 }
 
@@ -43,47 +40,22 @@ function CopyButton({ text }: { text: string }) {
 
 export function AssistantMessage({
   message,
-  selectedCitationIndex,
-  onSelectCitation,
   isStreaming = false,
 }: AssistantMessageProps) {
   const text = textFromMessage(message)
-  const citations = citationsFromMessage(message)
-  const hasNoEvidence = !isStreaming && text.length > 0 && citations.length === 0
+  const queryResult = queryResultFromMessage(message)
 
   return (
     <div className="min-w-0 space-y-3">
       {text ? (
-        <AssistantMarkdown
-          text={text}
-          citations={citations}
-          selectedCitationIndex={selectedCitationIndex}
-          onSelectCitation={onSelectCitation}
-        />
+        <AssistantMarkdown text={text} />
       ) : null}
 
       {isStreaming && text ? (
         <span className="inline-block h-4 w-2 translate-y-0.5 animate-pulse rounded-sm bg-foreground" />
       ) : null}
 
-      {hasNoEvidence ? (
-        <p className="rounded-lg border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          No filing evidence was found to support this answer.
-        </p>
-      ) : null}
-
-      {citations.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5 pt-1">
-          {citations.map((citation) => (
-            <CitationChip
-              key={`${citation.chunkId}-${citation.citationIndex}`}
-              citation={citation}
-              selected={selectedCitationIndex === citation.citationIndex}
-              onSelect={onSelectCitation}
-            />
-          ))}
-        </div>
-      ) : null}
+      {queryResult ? <QueryResultCard result={queryResult} /> : null}
 
       {!isStreaming && text ? (
         <div className="flex items-center gap-1 pt-0.5">

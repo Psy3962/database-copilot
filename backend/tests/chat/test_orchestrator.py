@@ -1,184 +1,80 @@
-import time
+import json
 import uuid
-from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.assistant.outputs import Citation, GroundedAnswer
+from app.assistant.outputs import DatabaseAnswer
 from app.auth.dependencies import CurrentUser
 from app.chat.orchestrator import run_turn
-from app.grounding.validator import ValidationResult
-from app.retrieval.types import RetrievedPassage
+from app.database.target import QueryResult
 from app.schemas.chat import TextPart, UIMessage
 
 
-def _passage() -> RetrievedPassage:
-    return RetrievedPassage(
-        chunk_id=uuid.uuid4(),
-        document_id=uuid.uuid4(),
-        chunk_index=0,
-        text="Azure revenue increased 29%.",
-        page="5",
-        section="MD&A",
-        fusion_score=0.7,
-        ticker="MSFT",
-        company_name="Microsoft Corporation",
-        form="10-K",
-        filing_date=date(2024, 7, 30),
-        fiscal_year=2024,
-        accession_number="0000789019-24-000012",
-    )
+def _payload(event: str) -> dict[str, object]:
+    return json.loads(event.removeprefix("data: ").strip())
 
 
 @pytest.mark.anyio
-async def test_run_turn_streams_grounded_answer_and_persists() -> None:
-    passage = _passage()
-    grounded = GroundedAnswer(
-        answer="Azure grew [1].",
-        citations=[
-            Citation(
-                citation_index=1,
-                chunk_id=passage.chunk_id,
-                excerpt="Azure revenue increased 29%.",
-            )
-        ],
+async def test_revenue_question_returns_expected_answer_sql_and_rows() -> None:
+    query_result = QueryResult(
+        query_id=uuid.uuid4(),
+        sql=(
+            "SELECT product, SUM(net_amount) AS revenue "
+            "FROM public.orders WHERE status <> 'cancelled' "
+            "GROUP BY product ORDER BY revenue DESC"
+        ),
+        columns=["product", "revenue"],
+        rows=[["Pro", 120], ["Basic", 80]],
+        row_count=2,
+        truncated=False,
+        elapsed_ms=4,
     )
-    user_message = UIMessage(role="user", parts=[TextPart(text="Azure growth?")])
-    events: list[str] = []
-
-    def fake_run(query: str, deps) -> GroundedAnswer:
-        deps.emit_status("searching", "Searching SEC filings…")
-        time.sleep(0.05)
-        deps.registry.register(passage)
-        return grounded
-
-    fake_validator = MagicMock()
-    fake_validator.validate = AsyncMock(return_value=ValidationResult(ok=True))
-
-    with (
-        patch("app.chat.orchestrator.run_document_agent", fake_run),
-        patch("app.chat.orchestrator.GroundingValidator", return_value=fake_validator),
-        patch(
-            "app.chat.streaming.append_grounded_turn",
-            AsyncMock(),
-        ) as mock_persist,
-    ):
-        async for event in run_turn(
-            client=MagicMock(),
-            thread_id=uuid.uuid4(),
-            user=CurrentUser(id=uuid.uuid4(), email="a@example.com"),
-            user_message=user_message,
-            thread_title="New chat",
-            retriever=MagicMock(),
-        ):
-            events.append(event)
-
-    assert events[0].startswith('data: {"type":"data-status"')
-    assert any('"stage":"searching"' in event for event in events)
-    assert any('"type":"text-delta"' in event for event in events)
-    assert any('"type":"data-citation"' in event for event in events)
-    mock_persist.assert_awaited_once()
-    persisted = mock_persist.await_args.kwargs["assistant_message"]
-    part_types = {part.type for part in persisted.parts}
-    assert "data-status" not in part_types
-
-
-@pytest.mark.anyio
-async def test_run_turn_validation_failure_does_not_persist() -> None:
-    grounded = GroundedAnswer(
-        answer="Bad answer without markers.",
-        citations=[
-            Citation(
-                citation_index=1,
-                chunk_id=uuid.uuid4(),
-                excerpt="missing from registry",
-            )
-        ],
+    expected_answer = (
+        "Total revenue is 200. Pro contributes 120 and Basic contributes 80."
     )
-    user_message = UIMessage(role="user", parts=[TextPart(text="Question")])
 
+    def fake_agent(_question: str, deps) -> DatabaseAnswer:
+        deps.registry.register(query_result)
+        return DatabaseAnswer(
+            answer=expected_answer,
+            query_id=query_result.query_id,
+        )
+
+    persist = AsyncMock()
     with (
-        patch("app.chat.orchestrator.run_document_agent", return_value=grounded),
-        patch("app.chat.streaming.append_grounded_turn", AsyncMock()) as mock_persist,
+        patch("app.chat.orchestrator.run_database_agent", fake_agent),
+        patch("app.chat.streaming.append_database_turn", persist),
     ):
         events = [
-            event
+            _payload(event)
             async for event in run_turn(
                 client=MagicMock(),
                 thread_id=uuid.uuid4(),
-                user=CurrentUser(id=uuid.uuid4(), email="a@example.com"),
-                user_message=user_message,
+                user=CurrentUser(id=uuid.uuid4(), email="analyst@example.com"),
+                user_message=UIMessage(
+                    role="user",
+                    parts=[TextPart(text="What is total revenue by product?")],
+                ),
                 thread_title="New chat",
-                retriever=MagicMock(),
             )
         ]
 
-    assert any('"type":"error"' in event for event in events)
-    mock_persist.assert_not_awaited()
-
-
-@pytest.mark.anyio
-async def test_run_turn_retries_once_after_validation_failure() -> None:
-    passage = _passage()
-    invalid = GroundedAnswer(
-        answer="Bad citation [1].",
-        citations=[
-            Citation(
-                citation_index=1,
-                chunk_id=uuid.uuid4(),
-                excerpt="not registered",
-            )
-        ],
-    )
-    valid = GroundedAnswer(
-        answer="Azure grew [1].",
-        citations=[
-            Citation(
-                citation_index=1,
-                chunk_id=passage.chunk_id,
-                excerpt="Azure revenue increased 29%.",
-            )
-        ],
-    )
-    user_message = UIMessage(role="user", parts=[TextPart(text="Azure growth?")])
-    attempts = 0
-
-    def fake_run(query: str, deps) -> GroundedAnswer:
-        nonlocal attempts
-        attempts += 1
-        if attempts == 1:
-            return invalid
-        deps.registry.register(passage)
-        return valid
-
-    fake_validator = MagicMock()
-    fake_validator.validate = AsyncMock(
-        side_effect=[
-            ValidationResult(ok=False, error="Citation references chunk x that was not retrieved."),
-            ValidationResult(ok=True),
-        ]
+    streamed_text = "".join(
+        str(event["delta"]) for event in events if event["type"] == "text-delta"
+    ).strip()
+    query_payload = next(
+        event["data"] for event in events if event["type"] == "data-query-result"
     )
 
-    with (
-        patch("app.chat.orchestrator.run_document_agent", fake_run),
-        patch("app.chat.orchestrator.GroundingValidator", return_value=fake_validator),
-        patch("app.chat.streaming.append_grounded_turn", AsyncMock()) as mock_persist,
-    ):
-        events = [
-            event
-            async for event in run_turn(
-                client=MagicMock(),
-                thread_id=uuid.uuid4(),
-                user=CurrentUser(id=uuid.uuid4(), email="a@example.com"),
-                user_message=user_message,
-                thread_title="New chat",
-                retriever=MagicMock(),
-            )
-        ]
-
-    assert attempts == 2
-    assert fake_validator.validate.await_count == 2
-    assert any('"stage":"retrying"' in event for event in events)
-    assert any('"type":"text-delta"' in event for event in events)
-    mock_persist.assert_awaited_once()
+    assert streamed_text == expected_answer
+    assert query_payload == {
+        "queryId": str(query_result.query_id),
+        "sql": query_result.sql,
+        "columns": ["product", "revenue"],
+        "rows": [["Pro", 120], ["Basic", 80]],
+        "rowCount": 2,
+        "truncated": False,
+        "elapsedMs": 4,
+    }
+    persist.assert_awaited_once()

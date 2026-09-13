@@ -10,17 +10,14 @@ import { PromptSuggestion } from '@/components/ui/prompt-suggestion'
 import { ScrollButton } from '@/components/ui/scroll-button'
 import {
   textFromMessage,
-  type CitationPayload,
   type PipelineStatus as PipelineStatusState,
-} from '@/lib/citations'
+} from '@/lib/query-results'
 import { EXAMPLE_QUESTIONS } from '@/lib/suggestions'
 
 type MessageListProps = {
   messages: UIMessage[]
   status: ChatStatus
   pipelineStatus: PipelineStatusState | null
-  selectedCitationIndex: number | null
-  onSelectCitation: (citation: CitationPayload) => void
   onSendSuggestion: (text: string) => void
 }
 
@@ -28,8 +25,6 @@ export function MessageList({
   messages,
   status,
   pipelineStatus,
-  selectedCitationIndex,
-  onSelectCitation,
   onSendSuggestion,
 }: MessageListProps) {
   const isBusy = status === 'submitted' || status === 'streaming'
@@ -49,10 +44,10 @@ export function MessageList({
           <div className="flex flex-1 flex-col items-center justify-center gap-6 py-12 text-center">
             <div className="space-y-1">
               <h2 className="text-lg font-semibold text-foreground">
-                Ask about SEC filings
+                Ask your database
               </h2>
               <p className="text-sm text-muted-foreground">
-                Every answer is grounded in source documents with citations.
+                Database Copilot inspects the schema and runs read-only SQL.
               </p>
             </div>
             <div className="flex flex-wrap justify-center gap-2">
@@ -74,8 +69,6 @@ export function MessageList({
           <MessageBubble
             key={message.id}
             message={message}
-            selectedCitationIndex={selectedCitationIndex}
-            onSelectCitation={onSelectCitation}
             isStreaming={message === lastMessage && lastIsStreamingAssistant}
           />
         ))}

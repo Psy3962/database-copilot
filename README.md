@@ -1,86 +1,125 @@
-# Document Copilot
+# Database Copilot
 
-An internal AI chatbot that lets analysts query a corpus of documents in plain English and get sourced, citable answers.
+Database Copilot is an authenticated AI assistant that translates plain-English
+business questions into PostgreSQL, executes the SQL through a read-only
+connection, and returns both an explanation and the underlying result table.
 
-## The client
+## What it does
 
-**Driftwood Capital** — fictional independent investment research firm. Their analysts spend half their week reading 10-Ks and 10-Qs before they can produce any original analysis. Document Copilot eats that intake work so they can skip straight to insight.
+- Inspects configured PostgreSQL schemas at query time.
+- Combines live schema metadata with human-written business definitions.
+- Generates PostgreSQL using a tool-calling OpenAI agent.
+- Runs one statement inside a database-enforced `READ ONLY` transaction.
+- Applies a statement timeout and maximum returned-row limit.
+- Shows the generated SQL and query results in the chat interface.
+- Stores each user's conversation history in Supabase.
 
-Full brief: [docs/client-brief.md](docs/client-brief.md)
+## Architecture
+
+The Vite React SPA authenticates users with Supabase Auth and streams chat
+requests to FastAPI. The backend owns schema inspection, SQL generation,
+read-only execution, result validation, and chat persistence.
+
+Two database connections are intentionally separate:
+
+- `DATABASE_URL`: the product Supabase database for users, chats, and migrations.
+- `TARGET_DATABASE_URL`: the PostgreSQL database that the copilot may query.
+
+See [docs/architecture.md](docs/architecture.md) for the full request flow and
+safety model.
 
 ## Stack
 
-| Layer              | Choice                                               |
-| ------------------ | ---------------------------------------------------- |
-| Backend            | Python + FastAPI                                     |
-| Frontend           | Vite + React SPA + TypeScript                        |
-| Database           | Supabase Postgres (users, chats, documents, chunks)  |
-| Migrations         | SQLAlchemy models + Alembic                          |
-| Retrieval          | Supabase `pgvector` + Postgres full-text search      |
-| Auth               | Supabase Auth (email only)                           |
-| Hosting            | Railway                                              |
-| LLM + embeddings   | OpenAI                                               |
+- Backend: Python 3.12, FastAPI, PydanticAI, SQLAlchemy, psycopg
+- Frontend: Vite, React, TypeScript, Tailwind CSS, shadcn/ui
+- Product persistence and authentication: Supabase
+- Target data source: PostgreSQL or Supabase Postgres
+- LLM: OpenAI
 
-## Repo layout
+## Project structure
 
 ```text
 document-copilot/
-├── AGENTS.md           # agent instructions (read first)
-├── README.md           # this file
-├── data/               # local corpus + download script (payloads gitignored)
-├── docs/
-│   └── client-brief.md # the client one-pager
-├── backend/            # FastAPI service
-└── frontend/           # React SPA (Vite)
+├── backend/
+│   ├── app/
+│   │   ├── assistant/       # Agent, tools, output contract
+│   │   ├── chat/            # Turn orchestration and streaming
+│   │   └── database/        # Product and target database access
+│   ├── database_description.md
+│   └── tests/
+├── frontend/
+│   └── src/
+│       ├── components/chat/
+│       ├── hooks/
+│       └── pages/
+└── docs/
 ```
 
 ## Prerequisites
 
-Install these before setting up `backend/` or `frontend/`:
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/)
+- Node.js 20+
+- [pnpm](https://pnpm.io/)
+- A Supabase project
+- An OpenAI API key
+- A PostgreSQL database and dedicated read-only user
 
-| Tool | Version | Used for | Install |
-| ---- | ------- | -------- | ------- |
-| [Python](https://www.python.org/downloads/) | 3.12+ | Backend runtime | OS package manager or python.org |
-| [uv](https://docs.astral.sh/uv/getting-started/installation/) | latest | Backend deps + `data/download.py` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| [Node.js](https://nodejs.org/) | 20+ (LTS) | Frontend toolchain | nodejs.org or `nvm install --lts` |
-| [pnpm](https://pnpm.io/installation) | latest | Frontend package manager | `corepack enable && corepack prepare pnpm@latest --activate` |
+## Configuration
 
-You also need accounts/keys for external services once the app is wired up. Start with [docs/guides/supabase-setup.md](docs/guides/supabase-setup.md) (account + project), then create an [OpenAI API key](https://platform.openai.com/api-keys) when the LLM layer is wired up.
-
-## Running locally
-
-Start with [docs/guides/supabase-setup.md](docs/guides/supabase-setup.md), then create env files for both services.
-
-Backend env:
+Create backend and frontend environment files:
 
 ```bash
-cd backend
-cp .env.example .env
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
 ```
 
-Fill these values in `backend/.env`:
+Required backend values:
 
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `DATABASE_URL` using the direct Supabase Postgres connection, not the transaction pooler
-- `OPENAI_API_KEY`
-- `ALLOWED_ORIGINS=http://localhost:5173`
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+DATABASE_URL=postgresql://product-user:password@host:5432/product-db
 
-Frontend env:
+TARGET_DATABASE_URL=postgresql://copilot-reader:password@host:5432/analytics
+TARGET_DATABASE_SCHEMAS=public
+DATABASE_DESCRIPTION_PATH=database_description.md
+QUERY_MAX_ROWS=200
+QUERY_TIMEOUT_MS=15000
 
-```bash
-cd frontend
-cp .env.example .env
+OPENAI_API_KEY=sk-...
+OPENAI_CHAT_MODEL=gpt-4.1
+ALLOWED_ORIGINS=http://localhost:5173
 ```
 
-Fill these values in `frontend/.env`:
+Required frontend values:
 
-- `VITE_API_BASE_URL=http://localhost:8000`
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
+```env
+VITE_API_BASE_URL=http://localhost:8000
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+```
 
-Install dependencies and migrate the database:
+Add metric definitions, required filters, join guidance, timezone conventions,
+and data-quality notes to `backend/database_description.md`. Do not place
+credentials in that file.
+
+## Target database permissions
+
+Use a dedicated PostgreSQL role with only:
+
+- `CONNECT` on the target database
+- `USAGE` on approved schemas
+- `SELECT` on approved tables or views
+
+The application also restricts statement types, starts a `READ ONLY`
+transaction, enforces a timeout, limits returned rows, and always rolls the
+transaction back. Database permissions remain the primary security boundary.
+
+## Run locally
+
+Install dependencies and apply product-database migrations:
 
 ```bash
 cd backend
@@ -91,81 +130,48 @@ cd ../frontend
 pnpm install
 ```
 
-Run the backend:
+Start the backend:
 
 ```bash
 cd backend
 uv run uvicorn app.main:app --reload
 ```
 
-Run the frontend in another terminal:
+Start the frontend in another terminal:
 
 ```bash
 cd frontend
 pnpm dev
 ```
 
-Open the Vite URL, usually `http://localhost:5173`.
+Open `http://localhost:5173`.
 
-Useful checks:
+## Example
+
+Question:
+
+> Which products generated the most non-cancelled revenue this quarter?
+
+Database Copilot inspects the available schema and business description,
+generates an appropriate aggregate query, executes it with the read-only target
+connection, and displays:
+
+- a concise explanation
+- the exact SQL
+- the returned columns and rows
+- execution time and truncation status
+
+## Verification
 
 ```bash
 cd backend
-uv run pytest -m "not integration"
-uv run ruff check .
-uv run python scripts/smoke_retrieval.py
+uv run ruff check app tests
+uv run pytest -m "not integration" --ignore=tests/ingest
 
 cd ../frontend
+pnpm tsc --noEmit
 pnpm lint
-pnpm build
 ```
 
-## Sample SEC data
-
-Use the standalone downloader to fetch a small local 10-K sample from SEC EDGAR. Edit the params at the top of `data/download.py`, especially `USER_AGENT`, then run:
-
-```bash
-uv run data/download.py
-```
-
-By default this downloads the latest 5 10-K filings for AAPL, MSFT, NVDA, AMZN, and GOOGL into year folders under `data/downloads/` and writes a `manifest.json`.
-Downloaded files are gitignored; the `data/` folder itself stays in git for the script and notes.
-
-Convert downloaded HTML filings to Markdown:
-
-```bash
-uv run data/convert_to_markdown.py
-```
-
-Load filing metadata into Supabase:
-
-```bash
-cd backend
-uv sync --extra ingest
-uv run python -m ingest.load_source_documents
-```
-
-Chunk and embed the full sample corpus:
-
-```bash
-cd backend
-uv run python -m ingest.chunk_and_embed --all
-```
-
-Update an existing corpus:
-
-```bash
-# Re-run metadata loading; existing rows are skipped by default.
-cd backend
-uv run python -m ingest.load_source_documents
-
-# Ingest only new filings; existing chunks are skipped by default.
-uv run python -m ingest.chunk_and_embed --all
-```
-
-Force-refresh chunks for one filing after changing chunking logic:
-
-```bash
-cd backend
-uv run python -m ingest.chunk_and_embed --accession 0000000000-00-000000 --force
-```
+The ingestion and retrieval directories are retained from the original Document
+Copilot baseline but are no longer used by the live chat path.

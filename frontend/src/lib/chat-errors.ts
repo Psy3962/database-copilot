@@ -54,11 +54,10 @@ export function classifyChatError(error: Error): ClassifiedChatError {
 
   if (
     messageIncludesAny(text, [
-      'grounding',
-      'citation',
-      'verified against source',
-      'source passages',
-      'fully verify',
+      'query result',
+      'read-only database',
+      'executed query',
+      'could not verify',
     ])
   ) {
     return {
@@ -66,7 +65,7 @@ export function classifyChatError(error: Error): ClassifiedChatError {
       title: 'Answer not verified',
       message:
         text ||
-        'The answer could not be verified against source documents. Try rephrasing your question.',
+        'The answer could not be verified against an executed query. Try rephrasing your question.',
       showLoginLink: false,
     }
   }

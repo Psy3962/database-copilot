@@ -37,7 +37,7 @@ export function ChatInput({ status, onSend, onStop }: ChatInputProps) {
           onSubmit={submit}
           className="rounded-2xl"
         >
-          <PromptInputTextarea placeholder="Ask about SEC filings…" />
+          <PromptInputTextarea placeholder="Ask your database…" />
           <PromptInputActions className="justify-end pt-1">
             {isBusy ? (
               <PromptInputAction tooltip="Stop">
@@ -62,7 +62,7 @@ export function ChatInput({ status, onSend, onStop }: ChatInputProps) {
           </PromptInputActions>
         </PromptInput>
         <p className="mt-2 text-center text-xs text-muted-foreground">
-          Answers are grounded in SEC filings. Verify citations before relying on them.
+          Queries run in a read-only transaction. Review generated SQL before relying on results.
         </p>
       </div>
     </div>

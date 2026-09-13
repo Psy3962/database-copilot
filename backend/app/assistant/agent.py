@@ -1,4 +1,4 @@
-"""PydanticAI document agent definition."""
+"""PydanticAI database agent definition."""
 
 from __future__ import annotations
 
@@ -8,47 +8,45 @@ from pydantic_ai import Agent, UsageLimits
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from app.assistant.deps import DocumentAgentDeps
-from app.assistant.outputs import GroundedAnswer
+from app.assistant.deps import DatabaseAgentDeps
+from app.assistant.outputs import DatabaseAnswer
 from app.assistant.status import emit_agent_done, emit_agent_start
 from app.assistant.tools import (
-    read_chunk,
-    read_chunks,
-    read_surrounding_chunks,
-    search_filings,
+    get_database_context,
+    run_readonly_query,
 )
 from app.config import settings
 
 _INSTRUCTIONS_PATH = Path(__file__).with_name("instructions.md")
 INSTRUCTIONS = _INSTRUCTIONS_PATH.read_text(encoding="utf-8")
 
-_document_agent: Agent[DocumentAgentDeps, GroundedAnswer] | None = None
+_database_agent: Agent[DatabaseAgentDeps, DatabaseAnswer] | None = None
 
 
-def get_document_agent() -> Agent[DocumentAgentDeps, GroundedAnswer]:
-    global _document_agent
-    if _document_agent is None:
+def get_database_agent() -> Agent[DatabaseAgentDeps, DatabaseAnswer]:
+    global _database_agent
+    if _database_agent is None:
         model = OpenAIChatModel(
             settings.openai_chat_model,
             provider=OpenAIProvider(api_key=settings.openai_api_key),
         )
-        _document_agent = Agent(
+        _database_agent = Agent(
             model,
-            deps_type=DocumentAgentDeps,
-            output_type=GroundedAnswer,
+            deps_type=DatabaseAgentDeps,
+            output_type=DatabaseAnswer,
             instructions=INSTRUCTIONS,
-            tools=[search_filings, read_chunks, read_chunk, read_surrounding_chunks],
+            tools=[get_database_context, run_readonly_query],
         )
-    return _document_agent
+    return _database_agent
 
 
-def run_document_agent(query: str, deps: DocumentAgentDeps) -> GroundedAnswer:
+def run_database_agent(query: str, deps: DatabaseAgentDeps) -> DatabaseAnswer:
     emit_agent_start(
         deps,
         model=settings.openai_chat_model,
         request_limit=settings.openai_agent_request_limit,
     )
-    result = get_document_agent().run_sync(
+    result = get_database_agent().run_sync(
         query,
         deps=deps,
         usage_limits=UsageLimits(request_limit=settings.openai_agent_request_limit),

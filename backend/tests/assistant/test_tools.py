@@ -1,132 +1,56 @@
+import json
 import uuid
-from dataclasses import dataclass
-from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.assistant.deps import DocumentAgentDeps, TurnRegistry
-from app.assistant.tools import read_chunk, read_chunks, read_surrounding_chunks, search_filings
-from app.retrieval.types import RetrievedPassage
+from app.assistant.deps import DatabaseAgentDeps, TurnRegistry
+from app.assistant.tools import run_readonly_query
+from app.database.target import QueryResult
 
 
-def _passage(chunk_id: uuid.UUID | None = None) -> RetrievedPassage:
-    return RetrievedPassage(
-        chunk_id=chunk_id or uuid.uuid4(),
-        document_id=uuid.uuid4(),
-        chunk_index=0,
-        text="Data Center revenue increased materially.",
-        page="42",
-        section="MD&A",
-        fusion_score=0.5,
-        ticker="NVDA",
-        company_name="NVIDIA Corporation",
-        form="10-K",
-        filing_date=date(2024, 1, 28),
-        fiscal_year=2024,
-        accession_number="0001045810-24-000012",
-    )
-
-
-@dataclass
-class _FakeCtx:
-    deps: DocumentAgentDeps
-
-
-def _ctx(retriever: MagicMock | None = None) -> _FakeCtx:
+@pytest.mark.anyio
+async def test_run_readonly_query_registers_result() -> None:
     registry = TurnRegistry()
-    deps = DocumentAgentDeps(
-        retriever=retriever or MagicMock(),
+    deps = DatabaseAgentDeps(
         registry=registry,
         thread_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
     )
-    return _FakeCtx(deps=deps)
+    ctx = MagicMock(deps=deps)
+    result = QueryResult(
+        query_id=uuid.uuid4(),
+        sql="SELECT count(*) AS total FROM orders",
+        columns=["total"],
+        rows=[[12]],
+        row_count=1,
+        truncated=False,
+        elapsed_ms=2,
+    )
 
-
-@pytest.mark.anyio
-async def test_search_filings_registers_passages() -> None:
-    passage = _passage()
-    retriever = MagicMock()
-    retriever.search.return_value = [passage]
-    ctx = _ctx(retriever)
-
-    with patch("app.assistant.tools._search_sync", return_value=[passage]):
-        result = await search_filings(ctx, "NVIDIA Data Center demand")
-
-    assert passage.chunk_id in ctx.deps.registry.passages_by_chunk_id
-    assert "NVDA" in result
-
-
-@pytest.mark.anyio
-async def test_read_chunk_returns_error_for_missing_chunk() -> None:
-    ctx = _ctx()
-
-    with patch("app.assistant.tools._read_chunk_sync", return_value=None):
-        result = await read_chunk(ctx, str(uuid.uuid4()))
-
-    assert result.startswith("Error:")
-    assert not ctx.deps.registry.passages_by_chunk_id
-
-
-@pytest.mark.anyio
-async def test_read_chunk_registers_found_passage() -> None:
-    passage = _passage()
-    ctx = _ctx()
-
-    with patch("app.assistant.tools._read_chunk_sync", return_value=passage):
-        result = await read_chunk(ctx, str(passage.chunk_id))
-
-    assert passage.chunk_id in ctx.deps.registry.passages_by_chunk_id
-    assert str(passage.chunk_id) in result
-
-
-@pytest.mark.anyio
-async def test_read_surrounding_chunks_registers_neighbors() -> None:
-    anchor = _passage()
-    neighbor = _passage()
-    ctx = _ctx()
-
-    with patch(
-        "app.assistant.tools._read_surrounding_sync",
-        return_value=[anchor, neighbor],
-    ):
-        result = await read_surrounding_chunks(ctx, str(anchor.chunk_id))
-
-    assert anchor.chunk_id in ctx.deps.registry.passages_by_chunk_id
-    assert neighbor.chunk_id in ctx.deps.registry.passages_by_chunk_id
-    assert "NVDA" in result
-
-
-@pytest.mark.anyio
-async def test_read_chunk_rejects_invalid_uuid() -> None:
-    ctx = _ctx()
-    result = await read_chunk(ctx, "not-a-uuid")
-    assert "invalid chunk_id" in result
-
-
-@pytest.mark.anyio
-async def test_read_chunks_registers_all_found_passages() -> None:
-    first = _passage()
-    second = _passage()
-    ctx = _ctx()
-
-    with patch(
-        "app.assistant.tools._read_chunks_sync",
-        return_value=[first, second],
-    ):
-        result = await read_chunks(
-            ctx,
-            [str(first.chunk_id), str(second.chunk_id)],
+    with patch("app.assistant.tools.execute_readonly_query", return_value=result):
+        payload = json.loads(
+            await run_readonly_query(ctx, "SELECT count(*) AS total FROM orders")
         )
 
-    assert first.chunk_id in ctx.deps.registry.passages_by_chunk_id
-    assert second.chunk_id in ctx.deps.registry.passages_by_chunk_id
-    assert "NVDA" in result
+    assert payload["query_id"] == str(result.query_id)
+    assert registry.results_by_query_id[result.query_id] == result
 
 
 @pytest.mark.anyio
-async def test_read_chunks_rejects_invalid_uuid() -> None:
-    ctx = _ctx()
-    result = await read_chunks(ctx, ["not-a-uuid"])
-    assert "invalid chunk_id" in result
+async def test_run_readonly_query_returns_safe_error_to_agent() -> None:
+    deps = DatabaseAgentDeps(
+        registry=TurnRegistry(),
+        thread_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+    )
+    ctx = MagicMock(deps=deps)
+
+    with patch(
+        "app.assistant.tools.execute_readonly_query",
+        side_effect=ValueError("Only SELECT is allowed."),
+    ):
+        payload = await run_readonly_query(ctx, "DELETE FROM orders")
+
+    assert payload == "Query failed: Only SELECT is allowed."
+    assert not deps.registry.results_by_query_id

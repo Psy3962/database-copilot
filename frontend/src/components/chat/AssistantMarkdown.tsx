@@ -1,13 +1,9 @@
 import { useMemo } from 'react'
 import type { Components } from 'react-markdown'
 
-import { CitationMarker } from '@/components/chat/CitationMarker'
 import { CodeBlock, CodeBlockCode } from '@/components/ui/code-block'
 import { Markdown } from '@/components/ui/markdown'
-import { citationByIndex, type CitationPayload } from '@/lib/citations'
 import { cn } from '@/lib/utils'
-
-const CITE_PREFIX = '#citation-'
 
 // Inline child-targeting utilities keep markdown readable without pulling in
 // the typography plugin, and keep every color bound to a theme token.
@@ -21,13 +17,6 @@ const MARKDOWN_CLASSES = cn(
   '[&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground',
 )
 
-function withCitationLinks(text: string, validIndices: Set<number>): string {
-  return text.replace(/\[(\d+)\]/g, (match, digits: string) => {
-    const index = Number(digits)
-    return validIndices.has(index) ? `[${match}](${CITE_PREFIX}${index})` : match
-  })
-}
-
 function extractLanguage(className?: string): string {
   if (!className) return 'plaintext'
   const match = className.match(/language-(\w+)/)
@@ -36,39 +25,12 @@ function extractLanguage(className?: string): string {
 
 type AssistantMarkdownProps = {
   text: string
-  citations: CitationPayload[]
-  selectedCitationIndex: number | null
-  onSelectCitation: (citation: CitationPayload) => void
 }
 
-export function AssistantMarkdown({
-  text,
-  citations,
-  selectedCitationIndex,
-  onSelectCitation,
-}: AssistantMarkdownProps) {
-  const validIndices = useMemo(
-    () => new Set(citations.map((citation) => citation.citationIndex)),
-    [citations],
-  )
-  const source = useMemo(() => withCitationLinks(text, validIndices), [text, validIndices])
-
+export function AssistantMarkdown({ text }: AssistantMarkdownProps) {
   const components: Partial<Components> = useMemo(
     () => ({
       a({ href, children, ...props }) {
-        if (href?.startsWith(CITE_PREFIX)) {
-          const index = Number(href.slice(CITE_PREFIX.length))
-          const citation = citationByIndex(citations, index)
-          if (citation) {
-            return (
-              <CitationMarker
-                index={index}
-                selected={selectedCitationIndex === index}
-                onSelect={() => onSelectCitation(citation)}
-              />
-            )
-          }
-        }
         return (
           <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
             {children}
@@ -101,12 +63,12 @@ export function AssistantMarkdown({
         return <>{children}</>
       },
     }),
-    [citations, selectedCitationIndex, onSelectCitation],
+    [],
   )
 
   return (
     <Markdown className={MARKDOWN_CLASSES} components={components}>
-      {source}
+      {text}
     </Markdown>
   )
 }

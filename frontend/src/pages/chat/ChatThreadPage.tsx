@@ -6,13 +6,12 @@ import type { UIMessage } from 'ai'
 import { ChatError } from '@/components/chat/ChatError'
 import { ChatInput } from '@/components/chat/ChatInput'
 import { MessageList } from '@/components/chat/MessageList'
-import { SourcePassageSheet } from '@/components/chat/SourcePassageSheet'
 import { Loader } from '@/components/ui/loader'
 import { useChatTransport } from '@/hooks/useChatTransport'
 import { useThreads } from '@/hooks/useThreads'
 import { classifyChatError } from '@/lib/chat-errors'
 import { getThreadMessages } from '@/lib/chat'
-import { type CitationPayload, type PipelineStatus as PipelineStatusState } from '@/lib/citations'
+import { type PipelineStatus as PipelineStatusState } from '@/lib/query-results'
 import { ApiError } from '@/lib/http'
 
 type ChatThreadViewProps = {
@@ -25,7 +24,6 @@ function ChatThreadView({ threadId, initialMessages }: ChatThreadViewProps) {
   const location = useLocation()
   const { refreshThreads } = useThreads()
   const [pipelineStatus, setPipelineStatus] = useState<PipelineStatusState | null>(null)
-  const [selectedCitation, setSelectedCitation] = useState<CitationPayload | null>(null)
   const transport = useChatTransport(threadId, setPipelineStatus)
 
   const { messages, sendMessage, status, error, stop } = useChat({
@@ -40,7 +38,6 @@ function ChatThreadView({ threadId, initialMessages }: ChatThreadViewProps) {
 
   function send(text: string) {
     setPipelineStatus(null)
-    setSelectedCitation(null)
     void sendMessage({ text })
   }
 
@@ -61,8 +58,6 @@ function ChatThreadView({ threadId, initialMessages }: ChatThreadViewProps) {
         messages={messages}
         status={status}
         pipelineStatus={pipelineStatus}
-        selectedCitationIndex={selectedCitation?.citationIndex ?? null}
-        onSelectCitation={setSelectedCitation}
         onSendSuggestion={send}
       />
 
@@ -74,12 +69,6 @@ function ChatThreadView({ threadId, initialMessages }: ChatThreadViewProps) {
 
       <ChatInput status={status} onSend={send} onStop={stop} />
 
-      <SourcePassageSheet
-        citation={selectedCitation}
-        onOpenChange={(open) => {
-          if (!open) setSelectedCitation(null)
-        }}
-      />
     </div>
   )
 }

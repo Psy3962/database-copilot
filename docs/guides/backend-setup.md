@@ -1,6 +1,8 @@
 # Backend setup
 
-This project uses a separate Python + FastAPI backend because the server is responsible for AI and document-processing work, not just basic web CRUD. Python gives us the strongest ecosystem for ingestion, chunking, embeddings, retrieval, evaluation, and LLM workflows. Keeping this logic behind a dedicated API also keeps the frontend focused on the user experience while the backend owns data access, orchestration, and grounding.
+This project uses a separate Python + FastAPI backend because the server owns
+authentication, schema inspection, guarded SQL execution, LLM orchestration, and
+chat persistence.
 
 ## Init (from empty `backend/`)
 
@@ -44,6 +46,10 @@ uv run alembic upgrade head
 ```
 
 ## Run
+
+Copy `.env.example` to `.env`. Keep `DATABASE_URL` pointed at the product
+Supabase database and set `TARGET_DATABASE_URL` to a separate SELECT-only
+PostgreSQL role. Add business metric definitions to `database_description.md`.
 
 ```bash
 cd backend

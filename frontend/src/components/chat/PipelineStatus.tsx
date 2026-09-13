@@ -1,4 +1,4 @@
-import { type PipelineStatus as PipelineStatusState } from '@/lib/citations'
+import { type PipelineStatus as PipelineStatusState } from '@/lib/query-results'
 import { cn } from '@/lib/utils'
 
 type PipelineStatusProps = {
@@ -10,7 +10,7 @@ export function PipelineStatus({ isSubmitted, pipelineStatus }: PipelineStatusPr
   const message =
     isSubmitted && !pipelineStatus
       ? 'Analyzing your question…'
-      : (pipelineStatus?.message ?? 'Researching filings…')
+      : (pipelineStatus?.message ?? 'Inspecting database…')
 
   return (
     <p

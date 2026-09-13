@@ -28,11 +28,11 @@ export function ChatEmptyPage() {
         <LogoMark className="size-12" />
         <div className="space-y-1.5">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            How can I help with your filings?
+            What would you like to know?
           </h1>
           <p className="max-w-md text-sm text-muted-foreground">
-            Ask a question about SEC filings. Every answer is grounded in source documents
-            with verifiable citations.
+            Ask a business question. Database Copilot will inspect the schema and run a
+            read-only query.
           </p>
         </div>
       </div>

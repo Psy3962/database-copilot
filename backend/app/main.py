@@ -6,7 +6,7 @@ from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.config import settings
 
-app = FastAPI(title="Document Copilot")
+app = FastAPI(title="Database Copilot")
 app.include_router(auth_router)
 app.include_router(chat_router)
 

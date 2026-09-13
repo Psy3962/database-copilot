@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     supabase_anon_key: str
     supabase_service_role_key: str
     database_url: str
+    target_database_url: str
+    target_database_schemas: str = "public"
+    database_description_path: Path = _BACKEND_DIR / "database_description.md"
+    query_max_rows: int = 200
+    query_timeout_ms: int = 15_000
 
     openai_api_key: str
     openai_embedding_model: str = "text-embedding-3-small"
@@ -43,7 +48,24 @@ class Settings(BaseSettings):
     @property
     def sqlalchemy_database_url(self) -> str:
         """Normalize Supabase-style URLs for SQLAlchemy + psycopg v3."""
-        url = self.database_url
+        return self._normalize_postgres_url(self.database_url)
+
+    @computed_field
+    @property
+    def sqlalchemy_target_database_url(self) -> str:
+        return self._normalize_postgres_url(self.target_database_url)
+
+    @computed_field
+    @property
+    def target_schemas(self) -> list[str]:
+        return [
+            schema.strip()
+            for schema in self.target_database_schemas.split(",")
+            if schema.strip()
+        ]
+
+    @staticmethod
+    def _normalize_postgres_url(url: str) -> str:
         if url.startswith("postgresql://"):
             return url.replace("postgresql://", "postgresql+psycopg://", 1)
         if url.startswith("postgres://"):
